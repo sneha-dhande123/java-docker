@@ -1,0 +1,106 @@
+name: Initial kubernetes setup on SDK
+on:
+  #push:
+  #  branches:
+  #      - master
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        description: Select the environment
+        required: true
+        options:
+        - dev
+        - QA
+        - Automation
+        - UAT
+        - SDK
+      namespace:
+        type: string
+        required: true
+      acr_name:
+        type: string
+        required: true
+      aks_name:
+        type: string
+        required: true
+      rg_name:
+        type: string
+        required: true
+      storage_name:
+         type: string
+         required: true
+      Select_Env_Path:
+        type: choice
+        description: Select Env repo path
+        options:
+        - Kubernetes/Azure/PricingAnalysis-Env
+        - Kubernetes/Azure/UAT-Env
+        - Kubernetes/Azure/QA-Env
+        - Kubernetes/Azure/SDK-Env
+         
+
+
+jobs:
+  initial_aks_setup:
+    name: kubernetes setup on SDK
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v2
+        with: 
+            ref: DEV-811_workflow
+
+      - name: Kubernetes Set up
+        uses: azure/k8s-set-context@v1
+        with:
+          kubeconfig: ${{ secrets.KUBECONFIGSDK }}
+          version: '1.19.9'
+        
+      - name: create namespace
+        run: kubectl create namespace ${{ inputs.namespace }}
+           #az aks update --enable-blob-driver -n ${{ inputs.aks_name }} -g ${{ inputs.rg_name }}
+           
+      - name: create secret docker-registry
+        run: kubectl create secret docker-registry znodeacrsecret --namespace ${{ inputs.namespace }} --docker-server=${{ inputs.acr_name }}.azurecr.io --docker-username=${{ secrets.ACRUNSDK }} --docker-password=${{ secrets.ACRPWSDK }}
+  
+      - name: create secret storage   
+        run:  kubectl create secret generic znode10storage-azure-secret --from-literal azurestorageaccountname=${{ secrets.STORAGEUNSDK }} --from-literal azurestorageaccountkey=${{ secrets.STORAGEPWSDK }} --type=Opaque -n ${{ inputs.namespace }}
+
+      - name: amla-pfx-secret
+        working-directory: ${{ inputs.Select_Env_Path }}
+        run: kubectl create secret generic amla-pfx-secret --from-file=ssl/amla.io.pfx --from-literal=password=${{ secrets.PFXSECRET }} -n ${{ inputs.namespace }}
+
+      - name: amla-ssl-secret    
+        working-directory: ${{ inputs.Select_Env_Path }}     
+        run:  kubectl create secret generic amla-ssl-secret --from-file=ssl/amla.io.crt --from-file=ssl/amla.io.key -n ${{ inputs.namespace }}
+
+      - name: amla-tls-secret 
+        working-directory: ${{ inputs.Select_Env_Path }}
+        run:  kubectl create secret tls amla-tls-secret --cert=ssl/amla.io.crt --key=ssl/amla.io.key -n ${{ inputs.namespace }}
+          
+      - name: create pvc
+        working-directory: ${{ inputs.Select_Env_Path }}
+        run: kubectl create -f pvc -n ${{ inputs.namespace }}
+          
+      - name: create service
+        working-directory: ${{ inputs.Select_Env_Path }}
+        run: kubectl create -f service -n ${{ inputs.namespace }}
+          
+      - name: create app
+        working-directory: ${{ inputs.Select_Env_Path }}
+        run: kubectl create -f service/app -n ${{ inputs.namespace }}
+          
+      - name: create scaler 
+        working-directory: ${{ inputs.Select_Env_Path }}
+        run: kubectl create -f deploy/app/scaler -n ${{ inputs.namespace }}
+
+      - name: create dependent pods
+        working-directory: ${{ inputs.Select_Env_Path }}
+        run: kubectl create -f deploy -n ${{ inputs.namespace }}
+
+      - name: create znode pods
+        working-directory: ${{ inputs.Select_Env_Path }}
+        run: kubectl create -f deploy/app/pods -n ${{ inputs.namespace }}
